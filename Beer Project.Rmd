@@ -1,0 +1,156 @@
+---
+title: "Project 1 (Beer) Markdown"
+author: "Michael Schulte"
+date: "10/9/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Load in data
+```{r}
+library(tidyverse)
+beers <- data.frame(read.csv('Beers.csv', stringsAsFactors = FALSE))
+breweries <- data.frame(read.csv('Breweries.csv', stringsAsFactors = FALSE))
+```
+1.	How many breweries are present in each state?
+```{r}
+num_breweries <- breweries %>% ggplot(aes(x = State, fill = State)) + geom_bar()+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+geom_text(stat='count', aes(label=..count..), vjust=-1)
+num_breweries
+```
+2.	Merge beer data with the breweries data. Print the first 6 observations and the last six observations to check the merged file.  (RMD only, this does not need to be included in the presentation or the deck.)
+```{r}
+head(beers)
+head(breweries)
+breweries <- breweries %>% rename("Brewery_id" = "Brew_ID")
+bb <- merge(beers, breweries, by="Brewery_id", all=TRUE)
+```
+```{r}
+bb <- bb %>% rename("Beer" = "Name.x") %>% rename("Brewery" = "Name.y")
+```
+```{r}
+print(head(bb))
+print(tail(bb))
+```
+3.	Address the missing values in each column.
+```{r}
+summary(bb)
+# bb[is.na(bb)] <- 0
+library(plyr)
+impute.mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+bb <- ddply(bb, ~ Style, transform, ABV = impute.mean(ABV), IBU = impute.mean(IBU))
+bb[is.na(bb)] <- 0
+```
+```{r}
+summary(bb)
+```
+4.	Compute the median alcohol content and international bitterness unit for each state. Plot a bar chart to compare.
+```{r}
+library(ggplot2)
+bb %>% ggplot(aes(x = as.factor(State), y = ABV, fill = State)) + geom_bar(stat = "summary", fun = "median") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("Median ABV")
+
+bb %>% ggplot(aes(x = as.factor(State), y = IBU, fill = State)) + geom_bar(stat = "summary", fun = "median") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("Median IBU")
+```
+5.	Which state has the maximum alcoholic (ABV) beer? Which state has the most bitter (IBU) beer?
+```{r}
+paste0("Max ABV State:", bb$State[which.max(bb$ABV)])
+bb %>% slice_max(ABV)
+paste0("Max IBU State:", bb$State[which.max(bb$IBU)])
+```
+6.	Comment on the summary statistics and distribution of the ABV variable.
+```{r}
+summary(bb$ABV)
+bb %>% ggplot(aes(x = ABV)) + geom_histogram() + ggtitle("Histogram of ABV")
+```
+7.	Is there an apparent relationship between the bitterness of the beer and its alcoholic content? Draw a scatter plot.  Make your best judgment of a relationship and EXPLAIN your answer.
+```{r}
+bb %>% ggplot(aes(x = IBU, y = ABV)) + geom_smooth(method = "lm") + geom_point() + ggtitle("ABV vs IBU")
+```
+8.	Budweiser would also like to investigate the difference with respect to IBU and ABV between IPAs (India Pale Ales) and other types of Ale (any beer with “Ale” in its name other than IPA).  You decide to use KNN classification to investigate this relationship.  Provide statistical evidence one way or the other. You can of course assume your audience is comfortable with percentages … KNN is very easy to understand conceptually. 
+In addition, while you have decided to use KNN to investigate this relationship (KNN is required) you may also feel free to supplement your response to this question with any other methods or techniques you have learned.  Creativity and alternative solutions are always encouraged.
+```{r}
+unique(bb$Style)
+bb$Class1 <- NA
+for(i in 1:nrow(bb)){
+  if(grepl("IPA", bb$Style[i]) == TRUE | grepl("India Pale Ale", bb$Style[i]) == TRUE){
+    bb$Class1[i] <- "IPA"
+  } else if(grepl("Ale", bb$Style[i]) == TRUE & !grepl("India Pale Ale", bb$Style[i]) == TRUE & !grepl("IPA", bb$Style[i]) == TRUE){
+    bb$Class1[i] <- "Ale"
+  } else{
+    bb$Class1[i] <- NA
+  }
+}
+```
+```{r}
+library(class)
+library(caret)
+library(e1071)
+set.seed(1234)
+bb_knn_df <- na.omit(bb)
+splitPerc <- 0.80
+trainIndices <- sample(1:dim(bb_knn_df)[1], round(splitPerc * dim(bb_knn_df)[1]))
+train <- bb_knn_df[trainIndices,]
+test <- bb_knn_df[-trainIndices,]
+train$ABV <- scale(train$ABV)
+train$IBU <- scale(train$IBU)
+test$ABV <- scale(test$ABV)
+test$IBU <- scale(test$IBU)
+accuracy <- c()
+k <- c()
+# Find maximum accuracy and its respective k value
+for(i in 1:300){
+  classifications <- knn(train[, c(4, 5)], test[, c(4, 5)], train$Class1, prob = TRUE, k = i)
+  CM <- confusionMatrix(table(classifications, test$Class1))
+  accuracy[i] <- CM$overall[1]
+  k[i] <- i
+  if(i == 1){
+    max_k <- i
+    accuracy_max <- accuracy[i]
+  }else if(accuracy[i] >= accuracy_max){
+    max_k <- i
+    accuracy_max <- accuracy[i]
+  }
+}
+plot(k, accuracy, type = "l", xlab = "k")
+print(paste0("Max k:", max_k))
+print(paste0("Max accuracy:", accuracy[max_k]))
+```
+```{r}
+classifications <- knn(train[, c(4, 5)], test[, c(4, 5)], train$Class1, prob = TRUE, k = max_k)
+  CM <- confusionMatrix(table(classifications, test$Class1))
+  print(CM)
+```
+```{r}
+library(plotly)
+x_test <- test %>% select("ABV", "IBU")
+y_test <- test %>% select("Class1")
+yscore <- knn(train[, c(4, 5)], test[, c(4, 5)], train$Class1, prob = TRUE, k = max_k)
+yscore <- attributes(yscore)$prob
+
+pdb <- cbind(x_test, y_test)
+pdb <- cbind(pdb, yscore)
+
+fig <- plot_ly(data = pdb,x = ~IBU, y = ~ABV, type = 'scatter', mode = 'markers',color = ~yscore, colors = 'RdBu', symbol = ~Class1, split = ~Class1, symbols = c('square-dot','circle-dot'), marker = list(size = 12, line = list(color = 'black', width = 1)))
+fig
+```
+```{r}
+p3<-ggplot(train,aes(x=IBU,y=ABV,colour=Class1)) + geom_jitter() +geom_density2d() + ggtitle("Density Plot of ABV vs IBU")
+p3
+```
+  
+
+9.	Knock their socks off!  Find one other useful inference from the data that you feel Budweiser may be able to find value in.  You must convince them why it is important and back up your conviction with appropriate statistical evidence. 
+```{r}
+fit.IBU <- aov(IBU~Style, data = bb)
+print("ANOVA IBU")
+summary(fit.IBU)
+fit.ABV <- aov(ABV~Style, data = bb)
+print("ANOVA ABV")
+summary(fit.ABV)
+```
+There is significant evidence to prove that at least one Style has a different IBU, and one style has a different ABV (p-value < 2e-16).As a result, one can infer that different styles are characterized by different combinations of bitterness and alcohol level.
+```{r}
+bb %>% ggplot(aes(x = IBU, y = ABV, color = Style)) + geom_point() + theme(legend.position = "None") + ggtitle("ABV vs IBU by Style")
+```
